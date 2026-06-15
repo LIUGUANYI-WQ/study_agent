@@ -1,7 +1,7 @@
 # 虚拟环境
 .venv/
 venv/
-
+learn_object.md
 # 密钥文件
 .env
 study_memory.json
