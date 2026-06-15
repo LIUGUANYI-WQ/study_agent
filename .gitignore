@@ -1,0 +1,12 @@
+# 虚拟环境
+.venv/
+venv/
+
+# 密钥文件
+.env
+study_memory.json
+# 日志与缓存
+logs/
+*.log
+__pycache__/
+*.pyc
