@@ -3,6 +3,7 @@ import datetime
 import schedule
 import time
 import os
+import sys
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -17,7 +18,6 @@ def init_memory():
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
-        # 初始化结构：任务列表 + 每日学习记录
         init_data = {"tasks": [], "daily_record": {}}
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
             json.dump(init_data, f, ensure_ascii=False, indent=2)
@@ -60,13 +60,31 @@ client = OpenAI(
     base_url="https://open.bigmodel.cn/api/paas/v4"
 )
 
-def llm_chat(prompt):
-    resp = client.chat.completions.create(
+def llm_chat(prompt, stream=False):
+    """调用LLM，支持流式输出"""
+    if not stream:
+        resp = client.chat.completions.create(
+            model="glm-4-flash",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3
+        )
+        return resp.choices[0].message.content
+
+    # 流式输出
+    full_content = ""
+    stream_resp = client.chat.completions.create(
         model="glm-4-flash",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.3
+        temperature=0.3,
+        stream=True
     )
-    return resp.choices[0].message.content
+    for chunk in stream_resp:
+        delta = chunk.choices[0].delta
+        if delta.content:
+            print(delta.content, end="", flush=True)
+            full_content += delta.content
+    print()  # 换行
+    return full_content
 
 def generate_review_plan():
     """复盘昨日学习 + 生成今日复习计划"""
@@ -84,9 +102,8 @@ def generate_review_plan():
 【昨日学习复盘与复习建议】
 【今日学习计划】
 """
-    result = llm_chat(cot_prompt)
     print("\n========== 每日学习提醒 ==========")
-    print(result)
+    result = llm_chat(cot_prompt, stream=True)
     print("=================================\n")
     return result
 
@@ -94,7 +111,6 @@ def generate_review_plan():
 def auto_run():
     generate_review_plan()
 
-# 每日 08:00、21:00 自动提醒，可自行修改时间
 schedule.every().day.at("08:00").do(auto_run)
 schedule.every().day.at("21:00").do(auto_run)
 
