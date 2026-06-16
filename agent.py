@@ -29,6 +29,17 @@ def save_memory(data):
 
 memory_data = init_memory()
 
+# ========== 短期记忆：滑动窗口 ==========
+MAX_HISTORY_ROUNDS = 5  # 最大保留对话轮数（1轮 = 1条user + 1条assistant）
+chat_history = []  # 对话历史列表
+
+def trim_history():
+    """滑动窗口：超出最大轮数时丢弃最早的对话"""
+    max_messages = MAX_HISTORY_ROUNDS * 2
+    if len(chat_history) > max_messages:
+        excess = len(chat_history) - max_messages
+        del chat_history[:excess]
+
 # ========== 2. 工具模块：时间、任务操作 ==========
 def get_now_date():
     return datetime.datetime.now().strftime("%Y-%m-%d")
@@ -61,20 +72,31 @@ client = OpenAI(
 )
 
 def llm_chat(prompt, stream=False):
-    """调用LLM，支持流式输出"""
+    """调用LLM，支持流式输出 + 短期记忆滑动窗口"""
+    # 将用户输入加入短期记忆
+    chat_history.append({"role": "user", "content": prompt})
+    trim_history()
+
+    # 构建带上下文的 messages
+    messages = [{"role": "system", "content": "你是一个学习助手，帮助用户复盘学习内容并制定复习计划。"}]
+    messages.extend(chat_history)
+
     if not stream:
         resp = client.chat.completions.create(
             model="glm-4-flash",
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             temperature=0.3
         )
-        return resp.choices[0].message.content
+        reply = resp.choices[0].message.content
+        chat_history.append({"role": "assistant", "content": reply})
+        trim_history()
+        return reply
 
     # 流式输出
     full_content = ""
     stream_resp = client.chat.completions.create(
         model="glm-4-flash",
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
         temperature=0.3,
         stream=True
     )
@@ -84,6 +106,9 @@ def llm_chat(prompt, stream=False):
             print(delta.content, end="", flush=True)
             full_content += delta.content
     print()  # 换行
+    # 将助手回复加入短期记忆
+    chat_history.append({"role": "assistant", "content": full_content})
+    trim_history()
     return full_content
 
 def generate_review_plan():
@@ -119,7 +144,8 @@ def main():
     print("1 - 添加新学习任务")
     print("2 - 手动生成今日复习计划")
     print("3 - 记录今日学习内容")
-    print("4 - 退出程序\n")
+    print("4 - 自由对话")
+    print("5 - 退出程序\n")
 
     while True:
         cmd = input("请输入指令编号：")
@@ -134,6 +160,15 @@ def main():
             record_daily_content(content)
             print("✅ 今日内容已保存")
         elif cmd == "4":
+            print("进入自由对话模式（输入 q 退出）")
+            while True:
+                user_input = input("你：")
+                if user_input.lower() == "q":
+                    print("退出对话模式\n")
+                    break
+                print("助手：", end="")
+                llm_chat(user_input, stream=True)
+        elif cmd == "5":
             print("👋 程序退出")
             break
         else:
