@@ -33,6 +33,10 @@ memory_data = init_memory()
 MAX_HISTORY_ROUNDS = 5  # 最大保留对话轮数（1轮 = 1条user + 1条assistant）
 chat_history = []  # 对话历史列表
 
+def clean_surrogates(text):
+    """清除字符串中的 UTF-8 代理字符（surrogate），防止编码错误"""
+    return text.encode("utf-8", errors="replace").decode("utf-8")
+
 def trim_history():
     """滑动窗口：超出最大轮数时丢弃最早的对话"""
     max_messages = MAX_HISTORY_ROUNDS * 2
@@ -74,7 +78,7 @@ client = OpenAI(
 def llm_chat(prompt, stream=False):
     """调用LLM，支持流式输出 + 短期记忆滑动窗口"""
     # 将用户输入加入短期记忆
-    chat_history.append({"role": "user", "content": prompt})
+    chat_history.append({"role": "user", "content": clean_surrogates(prompt)})
     trim_history()
 
     # 构建带上下文的 messages
@@ -87,7 +91,7 @@ def llm_chat(prompt, stream=False):
             messages=messages,
             temperature=0.3
         )
-        reply = resp.choices[0].message.content
+        reply = clean_surrogates(resp.choices[0].message.content)
         chat_history.append({"role": "assistant", "content": reply})
         trim_history()
         return reply
@@ -103,8 +107,9 @@ def llm_chat(prompt, stream=False):
     for chunk in stream_resp:
         delta = chunk.choices[0].delta
         if delta.content:
-            print(delta.content, end="", flush=True)
-            full_content += delta.content
+            safe_text = clean_surrogates(delta.content)
+            print(safe_text, end="", flush=True)
+            full_content += safe_text
     print()  # 换行
     # 将助手回复加入短期记忆
     chat_history.append({"role": "assistant", "content": full_content})
