@@ -17,6 +17,7 @@ class MemoryStore:
     MASTERY_LEVELS = ["生疏", "一般", "熟悉", "精通"]
     STATUS_OPTIONS = ["未完成", "进行中", "已完成"]
     CATEGORIES = ["编程", "算法", "数学", "英语", "其他"]
+    KNOWLEDGE_TYPES = ["概念", "原理", "方法", "工具", "案例", "其他"]
 
     def __init__(self, file_path="study_memory.json"):
         self.file_path = file_path
@@ -159,6 +160,73 @@ class MemoryStore:
         if date_str is None:
             date_str = self.get_now_date()
         return self.data["daily_record"].get(date_str, f"{date_str} 无学习记录")
+
+    # ---- 结构化学习记录 ----
+    def record_daily_structured(self, content, knowledge_points=None, mastery_level="生疏", tags=None, summary=None):
+        """
+        记录结构化的学习内容，便于后续知识图谱构建
+        :param content: 原始学习内容
+        :param knowledge_points: 提取的知识点列表 [{"name": "xxx", "type": "概念/原理/方法/工具/案例", "description": "xxx"}]
+        :param mastery_level: 整体掌握程度
+        :param tags: 标签列表
+        :param summary: AI总结的核心要点
+        """
+        today = self.get_now_date()
+        structured_record = {
+            "raw_content": content,
+            "knowledge_points": knowledge_points if knowledge_points else [],
+            "mastery_level": mastery_level,
+            "tags": tags if tags else [],
+            "summary": summary if summary else content,
+            "quality_score": self._calculate_quality_score(content, knowledge_points),
+            "create_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        self.data["daily_record"][today] = structured_record
+        self._save()
+        return f"已记录结构化学习内容，包含 {len(knowledge_points) if knowledge_points else 0} 个知识点"
+
+    def _calculate_quality_score(self, content, knowledge_points):
+        """评估学习记录质量，用于过滤噪音"""
+        score = 0
+        
+        # 内容长度评分
+        content_length = len(content.strip())
+        if content_length >= 50:
+            score += 30
+        elif content_length >= 20:
+            score += 15
+        
+        # 知识点数量评分
+        if knowledge_points and len(knowledge_points) >= 3:
+            score += 40
+        elif knowledge_points and len(knowledge_points) >= 1:
+            score += 20
+        
+        # 知识点详细程度评分
+        if knowledge_points:
+            detailed_points = sum(1 for kp in knowledge_points if kp.get("description") and len(kp["description"]) > 10)
+            score += min(detailed_points * 10, 30)
+        
+        return min(score, 100)
+
+    def get_structured_record(self, date_str=None):
+        """获取结构化的学习记录"""
+        if date_str is None:
+            date_str = self.get_now_date()
+        record = self.data["daily_record"].get(date_str)
+        if isinstance(record, dict) and "raw_content" in record:
+            return record
+        return None
+
+    def get_all_knowledge_points(self):
+        """提取所有学习记录中的知识点，用于构建知识图谱"""
+        all_points = []
+        for date, record in self.data.get("daily_record", {}).items():
+            if isinstance(record, dict) and "knowledge_points" in record:
+                for kp in record["knowledge_points"]:
+                    kp["source_date"] = date
+                    all_points.append(kp)
+        return all_points
 
     # ---- 工具方法 ----
     @staticmethod
@@ -342,6 +410,147 @@ class StudyAgent:
             return tool_map[func_name](**func_args)
         except Exception as e:
             return f"工具执行错误：{e}"
+
+    def analyze_learning_content(self, content):
+        """
+        使用LLM分析学习内容，提取知识点、评估质量、生成总结
+        :return: 分析结果字典
+        """
+        analysis_prompt = f"""你是一位学习内容分析专家，请帮我分析以下学习记录：
+
+学习内容：{content}
+
+请按照以下要求进行分析：
+
+1. **质量评估**（1-10分）：评估这条学习记录的质量，考虑因素包括：
+   - 内容的完整性和深度
+   - 是否包含具体知识点
+   - 是否有实际价值
+
+2. **知识点提取**：从内容中提取3-5个核心知识点，每个知识点包含：
+   - name: 知识点名称
+   - type: 类型（概念/原理/方法/工具/案例/其他）
+   - description: 详细描述
+
+3. **核心要点总结**：用简洁的语言总结学习内容的核心要点（不超过100字）
+
+4. **改进建议**：如果内容质量较低，给出具体的改进建议
+
+5. **标签建议**：建议3-5个标签
+
+请以JSON格式输出，不要添加任何额外文字：
+{{
+    "quality_score": 分数,
+    "quality_comment": "质量评价",
+    "knowledge_points": [{{"name": "xxx", "type": "xxx", "description": "xxx"}}],
+    "summary": "核心要点",
+    "improvement_suggestions": ["建议1", "建议2"],
+    "tags": ["标签1", "标签2"]
+}}
+"""
+        try:
+            resp = self.client.chat.completions.create(
+                model="glm-4-flash",
+                messages=[{"role": "user", "content": analysis_prompt}],
+                temperature=0.3
+            )
+            result = resp.choices[0].message.content
+            return json.loads(result)
+        except Exception as e:
+            print(f"内容分析失败：{e}")
+            return None
+
+    def optimize_learning_record(self, initial_content):
+        """
+        通过多轮对话优化学习记录，降低噪音
+        :return: 优化后的结构化记录
+        """
+        print("\n📝 正在分析您的学习内容...\n")
+        
+        # 第一轮：初步分析
+        analysis = self.analyze_learning_content(initial_content)
+        if not analysis:
+            print("分析失败，将直接保存原始内容")
+            return {"raw_content": initial_content, "knowledge_points": [], "summary": initial_content}
+        
+        print(f"🎯 质量评分：{analysis['quality_score']}/10")
+        print(f"💡 质量评价：{analysis['quality_comment']}")
+        
+        # 显示知识点
+        if analysis.get("knowledge_points"):
+            print("\n📚 提取的知识点：")
+            for i, kp in enumerate(analysis["knowledge_points"], 1):
+                print(f"  {i}. [{kp['type']}] {kp['name']}")
+                if kp.get("description"):
+                    print(f"     {kp['description'][:50]}...")
+        
+        print(f"\n📋 核心要点：{analysis['summary']}")
+        
+        # 质量较低时建议改进
+        if analysis["quality_score"] < 7:
+            print("\n🔧 改进建议：")
+            for i, suggestion in enumerate(analysis["improvement_suggestions"], 1):
+                print(f"  {i}. {suggestion}")
+            
+            # 第二轮：询问用户是否需要改进
+            while True:
+                try:
+                    choice = input("\n是否需要根据建议优化内容？(y/n) ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    choice = 'n'
+                
+                if choice == 'y':
+                    print("\n请补充或修改学习内容（按回车确认，输入 'q' 跳过）：")
+                    try:
+                        improved_content = input("> ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        improved_content = ''
+                    
+                    if improved_content.lower() == 'q':
+                        break
+                    if improved_content:
+                        print("\n🔄 重新分析优化后的内容...")
+                        analysis = self.analyze_learning_content(improved_content)
+                        if analysis:
+                            initial_content = improved_content
+                            print(f"\n🎯 更新后质量评分：{analysis['quality_score']}/10")
+                            print(f"📋 更新后核心要点：{analysis['summary']}")
+                        else:
+                            print("重新分析失败，使用原内容")
+                        break
+                    else:
+                        print("未输入内容，保持原记录")
+                        break
+                elif choice == 'n':
+                    break
+                else:
+                    print("请输入 y 或 n")
+        
+        # 第三轮：确认掌握程度
+        while True:
+            try:
+                mastery_input = input(f"\n请评估您对这些内容的掌握程度（{', '.join(MemoryStore.MASTERY_LEVELS)}，回车默认生疏）：").strip()
+            except (EOFError, KeyboardInterrupt):
+                mastery_input = ''
+            
+            if not mastery_input:
+                mastery_level = "生疏"
+                break
+            elif mastery_input in MemoryStore.MASTERY_LEVELS:
+                mastery_level = mastery_input
+                break
+            else:
+                print(f"请输入：{'/'.join(MemoryStore.MASTERY_LEVELS)}")
+        
+        # 返回结构化记录
+        return {
+            "raw_content": initial_content,
+            "knowledge_points": analysis.get("knowledge_points", []),
+            "mastery_level": mastery_level,
+            "tags": analysis.get("tags", []),
+            "summary": analysis.get("summary", initial_content),
+            "quality_score": analysis.get("quality_score", 0) * 10
+        }
 
     def chat(self, prompt, stream=False, use_tools=True):
         """与 LLM 对话，支持 Function Calling + 流式输出"""
@@ -740,10 +949,50 @@ class App:
         )
         if content is None:
             return
+        
         try:
-            print(self.agent.memory.record_daily(content))
+            # 使用LLM分析和优化学习内容
+            structured_record = self.agent.optimize_learning_record(content)
+            
+            # 显示即将保存的记录
+            print("\n📝 即将保存的学习记录：")
+            print(f"   原始内容：{structured_record['raw_content'][:50]}..." if len(structured_record['raw_content']) > 50 else f"   原始内容：{structured_record['raw_content']}")
+            print(f"   核心要点：{structured_record['summary']}")
+            print(f"   知识点数：{len(structured_record['knowledge_points'])}")
+            print(f"   掌握程度：{structured_record['mastery_level']}")
+            print(f"   质量评分：{structured_record['quality_score']}分")
+            
+            # 确认是否保存
+            while True:
+                try:
+                    confirm = input("\n确认保存此记录？(y/n) ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    confirm = 'n'
+                
+                if confirm == 'y':
+                    # 使用结构化方式保存
+                    result = self.agent.memory.record_daily_structured(
+                        content=structured_record['raw_content'],
+                        knowledge_points=structured_record['knowledge_points'],
+                        mastery_level=structured_record['mastery_level'],
+                        tags=structured_record['tags'],
+                        summary=structured_record['summary']
+                    )
+                    print(f"\n✅ {result}")
+                    break
+                elif confirm == 'n':
+                    print("\n已取消保存\n")
+                    break
+                else:
+                    print("请输入 y 或 n")
+                    
         except Exception as e:
             print(f"记录失败：{e}\n")
+            print("将以原始方式保存...")
+            try:
+                print(self.agent.memory.record_daily(content))
+            except Exception as e2:
+                print(f"保存失败：{e2}\n")
 
     def _handle_ranking(self):
         try:
