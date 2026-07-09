@@ -3,13 +3,20 @@ import os
 import re
 import json
 import datetime
+import functools
 from flask import Flask, render_template, request, jsonify, Response
 from dotenv import load_dotenv
+import jwt
+from werkzeug.security import generate_password_hash, check_password_hash
 from src.agent import StudyAgent
 from src.memory import MemoryStore
 from src.session import ChatSession
 
 load_dotenv()
+
+# JWT 配置
+JWT_SECRET = os.getenv("JWT_SECRET", "study-agent-secret-key-change-in-production")
+JWT_EXPIRE_DAYS = 7
 
 # 停用词：这些通用词汇不参与关键词匹配，避免跨领域误匹配
 STOP_WORDS = {
@@ -29,6 +36,30 @@ import time
 @app.before_request
 def log_request():
     request._start_time = time.time()
+
+@app.before_request
+def resolve_current_user():
+    """解析当前用户，设置到 memory.current_user_id"""
+    # 白名单：不需要登录的接口
+    white_list = ["/api/auth/login", "/api/auth/register"]
+    if request.path in white_list:
+        return
+
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if token:
+        payload = decode_token(token)
+        if payload:
+            agent.memory.current_user_id = payload["user_id"]
+            request.user_id = payload["user_id"]
+            request.username = payload["username"]
+            # 重新加载当前用户的数据
+            agent.memory._sync_from_db()
+            return
+
+    # 没有 token 或 token 无效，使用默认用户（user_id=0）
+    agent.memory.current_user_id = 0
+    request.user_id = 0
+    request.username = None
 
 @app.after_request
 def log_response(response):
@@ -52,6 +83,127 @@ if os.path.exists("study_memory.json"):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+# ---- JWT 工具函数 ----
+def generate_token(user_id, username):
+    payload = {
+        "user_id": user_id,
+        "username": username,
+        "exp": datetime.datetime.utcnow() + datetime.timedelta(days=JWT_EXPIRE_DAYS)
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def decode_token(token):
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+
+def login_required(f):
+    @functools.wraps(f)
+    def decorated_function(*args, **kwargs):
+        token = request.headers.get("Authorization", "").replace("Bearer ", "")
+        if not token:
+            return jsonify({"error": "未登录，请先登录"}), 401
+        payload = decode_token(token)
+        if not payload:
+            return jsonify({"error": "登录已过期，请重新登录"}), 401
+        request.user_id = payload["user_id"]
+        request.username = payload["username"]
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def get_current_user():
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not token:
+        return None
+    payload = decode_token(token)
+    return payload
+
+
+# ---- 用户认证 API ----
+@app.route("/api/auth/register", methods=["POST"])
+def register():
+    data = request.json
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+    email = data.get("email", "").strip() or None
+    nickname = data.get("nickname", "").strip() or None
+
+    if not username or not password:
+        return jsonify({"error": "用户名和密码不能为空"}), 400
+    if len(username) < 3 or len(username) > 20:
+        return jsonify({"error": "用户名长度应为 3-20 位"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "密码长度不能少于 6 位"}), 400
+
+    password_hash = generate_password_hash(password)
+    user = agent.memory.create_user(username, password_hash, email, nickname)
+    if not user:
+        return jsonify({"error": "用户名已存在"}), 400
+
+    token = generate_token(user["id"], user["username"])
+    return jsonify({
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "nickname": user["nickname"],
+            "email": user["email"]
+        }
+    })
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def login():
+    data = request.json
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+
+    if not username or not password:
+        return jsonify({"error": "用户名和密码不能为空"}), 400
+
+    user = agent.memory.get_user_by_username(username)
+    if not user:
+        return jsonify({"error": "用户名或密码错误"}), 401
+
+    if not check_password_hash(user["password_hash"], password):
+        return jsonify({"error": "用户名或密码错误"}), 401
+
+    agent.memory.update_last_login(user["id"])
+    token = generate_token(user["id"], user["username"])
+    return jsonify({
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "nickname": user.get("nickname", user["username"]),
+            "email": user.get("email")
+        }
+    })
+
+
+@app.route("/api/auth/me", methods=["GET"])
+@login_required
+def get_me():
+    user = agent.memory.get_user_by_id(request.user_id)
+    if not user:
+        return jsonify({"error": "用户不存在"}), 404
+    return jsonify({
+        "id": user["id"],
+        "username": user["username"],
+        "nickname": user.get("nickname", user["username"]),
+        "email": user.get("email"),
+        "create_time": user.get("create_time"),
+        "last_login_time": user.get("last_login_time")
+    })
 
 
 # ---- API ----

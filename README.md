@@ -96,8 +96,10 @@
 | **后端** | Flask 3.x | 轻量级 Web 框架 |
 | **前端** | 原生 JavaScript + CSS3 | 无框架依赖，加载快 |
 | **数据库** | SQLite | 轻量、无需额外部署 |
+| **用户认证** | JWT (JSON Web Token) | 无状态认证，支持多用户 |
 | **AI 模型** | 智谱AI (GLM-4-Flash) | 大模型驱动智能考察 |
 | **流式响应** | SSE (Server-Sent Events) | 实时流式出题和批改 |
+| **容器化** | Docker + docker-compose | 一键部署，环境一致 |
 | **算法** | 艾宾浩斯遗忘曲线 | 科学记忆算法 |
 
 ---
@@ -108,12 +110,27 @@
 
 ```mermaid
 erDiagram
+    users ||--o{ tasks : "拥有"
+    users ||--o{ daily_records : "拥有"
+    users ||--o{ knowledge_points : "拥有"
+    users ||--o{ task_knowledge_points : "拥有"
     tasks ||--o{ task_knowledge_points : "关联"
     daily_records ||--o{ knowledge_points : "包含"
     knowledge_points ||--o{ task_knowledge_points : "属于"
 
+    users {
+        INTEGER id PK "主键"
+        TEXT username UK "用户名"
+        TEXT password_hash "密码哈希"
+        TEXT email "邮箱"
+        TEXT nickname "昵称"
+        TEXT create_time "注册时间"
+        TEXT last_login_time "最后登录"
+    }
+
     tasks {
         INTEGER id PK "主键"
+        INTEGER user_id FK "用户ID"
         TEXT task "任务名称"
         TEXT deadline "截止日期"
         TEXT status "状态"
@@ -128,7 +145,8 @@ erDiagram
 
     daily_records {
         INTEGER id PK "主键"
-        TEXT date UK "日期"
+        INTEGER user_id FK "用户ID"
+        TEXT date "日期"
         TEXT raw_content "原始内容"
         TEXT mastery_level "掌握等级"
         TEXT tags "标签"
@@ -139,6 +157,7 @@ erDiagram
 
     knowledge_points {
         INTEGER id PK "主键"
+        INTEGER user_id FK "用户ID"
         INTEGER record_id FK "记录ID"
         TEXT name "知识点名称"
         TEXT type "类型"
@@ -147,6 +166,7 @@ erDiagram
 
     task_knowledge_points {
         INTEGER id PK "主键"
+        INTEGER user_id FK "用户ID"
         INTEGER task_id FK "任务ID"
         INTEGER knowledge_id FK "知识点ID"
         TEXT create_time "创建时间"
@@ -454,14 +474,45 @@ study_agent/
 - **Railway**：每月有免费额度
 - 支持 GitHub 自动部署，push 代码自动更新
 
-### 方案三：Docker 部署
-项目支持 Docker 容器化部署，确保环境一致性。
+### 方案三：Docker 部署（推荐）
+项目已内置 Docker 支持，一键启动，环境一致性有保障。
+
+**前置条件**：已安装 Docker 和 docker-compose
+
+**快速启动**：
+```bash
+# 1. 克隆项目
+git clone https://github.com/LIUGUANYI-WQ/study_agent.git
+cd study_agent
+
+# 2. 配置环境变量
+echo "ZHIPUAI_API_KEY=你的智谱AI API Key" > .env
+echo "JWT_SECRET=你的JWT密钥" >> .env
+
+# 3. 启动服务
+docker-compose up -d
+
+# 4. 访问 http://localhost:5000
+```
+
+**常用命令**：
+```bash
+docker-compose up -d      # 后台启动
+docker-compose down       # 停止服务
+docker-compose logs -f    # 查看日志
+docker-compose restart    # 重启服务
+```
+
+**数据持久化**：
+- 数据库文件挂载在 `./data` 目录，删除容器不丢失数据
+- 升级版本时只需重新 build：`docker-compose up -d --build`
 
 ---
 
 ## 🗺 未来规划
 
-- [ ] 用户系统，支持多用户
+- [x] 用户系统，支持多用户 + JWT 认证
+- [x] Docker 容器化部署
 - [ ] 数据可视化看板（学习时长、掌握趋势）
 - [ ] 错题本自动整理
 - [ ] AI 生成学习路径规划

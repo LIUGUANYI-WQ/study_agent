@@ -2144,8 +2144,139 @@ async function unlinkKnowledgePoint(taskIdx, kpIdx, event) {
     }
 }
 
+/* ========== 用户认证 ========== */
+let authToken = localStorage.getItem('auth_token');
+let currentUser = JSON.parse(localStorage.getItem('current_user') || 'null');
+
+function getAuthHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (authToken) {
+        headers['Authorization'] = 'Bearer ' + authToken;
+    }
+    return headers;
+}
+
+function showAuthModal(mode) {
+    const modal = document.getElementById('auth-modal');
+    const title = document.getElementById('auth-title');
+    const submitBtn = document.getElementById('auth-submit-btn');
+    const switchText = document.getElementById('auth-switch-text');
+    const switchLink = document.getElementById('auth-switch-link');
+    const nicknameGroup = document.getElementById('nickname-group');
+    const errorEl = document.getElementById('auth-error');
+
+    errorEl.style.display = 'none';
+    document.getElementById('auth-username').value = '';
+    document.getElementById('auth-password').value = '';
+    document.getElementById('auth-nickname').value = '';
+
+    if (mode === 'login') {
+        title.textContent = '登录';
+        submitBtn.textContent = '登录';
+        switchText.textContent = '还没有账号？';
+        switchLink.textContent = '立即注册';
+        nicknameGroup.style.display = 'none';
+        modal.dataset.mode = 'login';
+    } else {
+        title.textContent = '注册';
+        submitBtn.textContent = '注册';
+        switchText.textContent = '已有账号？';
+        switchLink.textContent = '立即登录';
+        nicknameGroup.style.display = 'block';
+        modal.dataset.mode = 'register';
+    }
+    modal.style.display = 'flex';
+}
+
+function hideAuthModal() {
+    document.getElementById('auth-modal').style.display = 'none';
+}
+
+function switchAuthMode() {
+    const modal = document.getElementById('auth-modal');
+    const currentMode = modal.dataset.mode;
+    showAuthModal(currentMode === 'login' ? 'register' : 'login');
+}
+
+async function submitAuth() {
+    const modal = document.getElementById('auth-modal');
+    const mode = modal.dataset.mode;
+    const username = document.getElementById('auth-username').value.trim();
+    const password = document.getElementById('auth-password').value;
+    const nickname = document.getElementById('auth-nickname').value.trim();
+    const errorEl = document.getElementById('auth-error');
+    const submitBtn = document.getElementById('auth-submit-btn');
+
+    errorEl.style.display = 'none';
+    submitBtn.disabled = true;
+    submitBtn.textContent = mode === 'login' ? '登录中...' : '注册中...';
+
+    try {
+        const url = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+        const body = mode === 'login'
+            ? { username, password }
+            : { username, password, nickname };
+
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || '操作失败');
+        }
+
+        authToken = data.token;
+        currentUser = data.user;
+        localStorage.setItem('auth_token', authToken);
+        localStorage.setItem('current_user', JSON.stringify(currentUser));
+
+        updateUserUI();
+        hideAuthModal();
+        showToast(mode === 'login' ? '登录成功' : '注册成功', 'success');
+
+        loadStats();
+        if (typeof loadTasks === 'function') loadTasks();
+        if (typeof loadTodayRecord === 'function') loadTodayRecord();
+    } catch (e) {
+        errorEl.textContent = e.message;
+        errorEl.style.display = 'block';
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = mode === 'login' ? '登录' : '注册';
+    }
+}
+
+function logout() {
+    authToken = null;
+    currentUser = null;
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('current_user');
+    updateUserUI();
+    showToast('已退出登录', 'info');
+    location.reload();
+}
+
+function updateUserUI() {
+    const notLogged = document.getElementById('user-not-logged');
+    const logged = document.getElementById('user-logged');
+    const userName = document.getElementById('user-name');
+
+    if (currentUser) {
+        notLogged.style.display = 'none';
+        logged.style.display = 'block';
+        userName.textContent = currentUser.nickname || currentUser.username;
+    } else {
+        notLogged.style.display = 'block';
+        logged.style.display = 'none';
+    }
+}
+
 /* ========== 初始化 ========== */
 document.addEventListener('DOMContentLoaded', () => {
     initWelcome();
+    updateUserUI();
     loadStats();
 });

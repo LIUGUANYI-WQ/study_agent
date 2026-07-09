@@ -12,8 +12,11 @@ class MemoryStore:
     CATEGORIES = ["编程", "算法", "数学", "英语", "其他"]
     KNOWLEDGE_TYPES = ["概念", "原理", "方法", "工具", "案例", "其他"]
 
-    def __init__(self, db_path="study_memory.db"):
+    def __init__(self, db_path=None):
+        if db_path is None:
+            db_path = os.getenv("DB_PATH", "study_memory.db")
         self.db_path = db_path
+        self.current_user_id = 0  # 当前操作用户ID，0为默认用户
         self._init_db()
         # 兼容属性：data 字典供外部直接读取（如 web_app.py 的 quiz_start）
         self.data = self._load_to_dict()
@@ -31,9 +34,29 @@ class MemoryStore:
     def _init_db(self):
         conn = self._get_conn()
         c = conn.cursor()
+
+        # 先迁移：为旧数据库添加 user_id 列（如果不存在）
+        # 必须在创建索引之前执行，否则旧数据库会因为没有列而建索引失败
+        for table in ["tasks", "daily_records", "knowledge_points", "task_knowledge_points"]:
+            try:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # 列已存在，忽略
+
         c.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                username        TEXT UNIQUE NOT NULL,
+                password_hash   TEXT NOT NULL,
+                email           TEXT,
+                nickname        TEXT,
+                create_time     TEXT,
+                last_login_time TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS tasks (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id       INTEGER NOT NULL DEFAULT 0,
                 task          TEXT NOT NULL,
                 deadline      TEXT NOT NULL,
                 status        TEXT DEFAULT '未完成',
@@ -48,7 +71,8 @@ class MemoryStore:
 
             CREATE TABLE IF NOT EXISTS daily_records (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                date          TEXT UNIQUE NOT NULL,
+                user_id       INTEGER NOT NULL DEFAULT 0,
+                date          TEXT NOT NULL,
                 raw_content   TEXT,
                 mastery_level TEXT DEFAULT '生疏',
                 tags          TEXT DEFAULT '[]',
@@ -59,6 +83,7 @@ class MemoryStore:
 
             CREATE TABLE IF NOT EXISTS knowledge_points (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id       INTEGER NOT NULL DEFAULT 0,
                 record_id     INTEGER NOT NULL,
                 name          TEXT,
                 type          TEXT,
@@ -68,6 +93,7 @@ class MemoryStore:
 
             CREATE TABLE IF NOT EXISTS task_knowledge_points (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id         INTEGER NOT NULL DEFAULT 0,
                 task_id         INTEGER NOT NULL,
                 knowledge_id    INTEGER NOT NULL,
                 create_time     TEXT,
@@ -76,12 +102,67 @@ class MemoryStore:
                 UNIQUE(task_id, knowledge_id)
             );
 
-            CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority DESC);
-            CREATE INDEX IF NOT EXISTS idx_records_date   ON daily_records(date);
-            CREATE INDEX IF NOT EXISTS idx_kp_record_id   ON knowledge_points(record_id);
-            CREATE INDEX IF NOT EXISTS idx_tkp_task_id    ON task_knowledge_points(task_id);
-            CREATE INDEX IF NOT EXISTS idx_tkp_kp_id      ON task_knowledge_points(knowledge_id);
+            CREATE INDEX IF NOT EXISTS idx_users_username     ON users(username);
+            CREATE INDEX IF NOT EXISTS idx_tasks_user_id      ON tasks(user_id);
+            CREATE INDEX IF NOT EXISTS idx_tasks_priority     ON tasks(priority DESC);
+            CREATE INDEX IF NOT EXISTS idx_records_user_id    ON daily_records(user_id);
+            CREATE INDEX IF NOT EXISTS idx_records_date       ON daily_records(date);
+            CREATE INDEX IF NOT EXISTS idx_kp_user_id         ON knowledge_points(user_id);
+            CREATE INDEX IF NOT EXISTS idx_kp_record_id       ON knowledge_points(record_id);
+            CREATE INDEX IF NOT EXISTS idx_tkp_user_id        ON task_knowledge_points(user_id);
+            CREATE INDEX IF NOT EXISTS idx_tkp_task_id        ON task_knowledge_points(task_id);
+            CREATE INDEX IF NOT EXISTS idx_tkp_kp_id          ON task_knowledge_points(knowledge_id);
         """)
+
+        conn.commit()
+        conn.close()
+
+    # ============================================================
+    #  用户管理
+    # ============================================================
+    def create_user(self, username, password_hash, email=None, nickname=None):
+        conn = self._get_conn()
+        c = conn.cursor()
+        now = self.get_now_date()
+        try:
+            c.execute(
+                "INSERT INTO users (username, password_hash, email, nickname, create_time) VALUES (?, ?, ?, ?, ?)",
+                (username, password_hash, email, nickname or username, now)
+            )
+            conn.commit()
+            user_id = c.lastrowid
+            return {"id": user_id, "username": username, "nickname": nickname or username, "email": email}
+        except sqlite3.IntegrityError:
+            conn.close()
+            return None
+        finally:
+            conn.close()
+
+    def get_user_by_username(self, username):
+        conn = self._get_conn()
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE username = ?", (username,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+        return None
+
+    def get_user_by_id(self, user_id):
+        conn = self._get_conn()
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+        return None
+
+    def update_last_login(self, user_id):
+        conn = self._get_conn()
+        c = conn.cursor()
+        now = self.get_now_date()
+        c.execute("UPDATE users SET last_login_time = ? WHERE id = ?", (now, user_id))
         conn.commit()
         conn.close()
 
@@ -91,12 +172,14 @@ class MemoryStore:
     def _load_to_dict(self):
         conn = self._get_conn()
         c = conn.cursor()
+        uid = self.current_user_id
 
         # tasks
-        c.execute("SELECT * FROM tasks ORDER BY priority DESC")
+        c.execute("SELECT * FROM tasks WHERE user_id = ? ORDER BY priority DESC", (uid,))
         tasks = []
         for row in c.fetchall():
             tasks.append({
+                "id": row["id"],
                 "task": row["task"],
                 "deadline": row["deadline"],
                 "status": row["status"],
@@ -111,15 +194,16 @@ class MemoryStore:
 
         # daily_records + knowledge_points
         daily_record = {}
-        c.execute("SELECT * FROM daily_records ORDER BY date DESC")
+        c.execute("SELECT * FROM daily_records WHERE user_id = ? ORDER BY date DESC", (uid,))
         for row in c.fetchall():
             date_str = row["date"]
             c2 = conn.cursor()
-            c2.execute("SELECT name, type, description FROM knowledge_points WHERE record_id=?", (row["id"],))
-            kps = [{"name": r["name"], "type": r["type"], "description": r["description"]} for r in c2.fetchall()]
+            c2.execute("SELECT id, name, type, description FROM knowledge_points WHERE record_id=?", (row["id"],))
+            kps = [{"id": r["id"], "name": r["name"], "type": r["type"], "description": r["description"]} for r in c2.fetchall()]
 
             tags = json.loads(row["tags"]) if row["tags"] else []
             record = {
+                "id": row["id"],
                 "raw_content": row["raw_content"] or "",
                 "knowledge_points": kps,
                 "mastery_level": row["mastery_level"] or "生疏",
@@ -144,7 +228,8 @@ class MemoryStore:
         today = datetime.datetime.now()
         conn = self._get_conn()
         c = conn.cursor()
-        c.execute("SELECT id, deadline, mastery, last_review, status FROM tasks")
+        uid = self.current_user_id
+        c.execute("SELECT id, deadline, mastery, last_review, status FROM tasks WHERE user_id = ?", (uid,))
         rows = c.fetchall()
         for row in rows:
             if row["status"] == "已完成":
@@ -186,7 +271,7 @@ class MemoryStore:
 
                 priority = urgency_score + mastery_score + interval_score
 
-            c.execute("UPDATE tasks SET priority=? WHERE id=?", (priority, row["id"]))
+            c.execute("UPDATE tasks SET priority=? WHERE id=? AND user_id=?", (priority, row["id"], uid))
         conn.commit()
         conn.close()
 
@@ -198,11 +283,12 @@ class MemoryStore:
         now = self.get_now_date()
         conn = self._get_conn()
         c = conn.cursor()
+        uid = self.current_user_id
         c.execute(
-            """INSERT INTO tasks (task, deadline, status, review_count, create_time,
+            """INSERT INTO tasks (user_id, task, deadline, status, review_count, create_time,
                category, mastery, last_review, estimated_hours, priority)
                VALUES (?, ?, '未完成', 0, ?, ?, ?, NULL, ?, 0)""",
-            (task_name, deadline, now, category, mastery, estimated_hours)
+            (uid, task_name, deadline, now, category, mastery, estimated_hours)
         )
         task_id = c.lastrowid
         conn.commit()
@@ -215,7 +301,8 @@ class MemoryStore:
     def update_task(self, task_index, **kwargs):
         conn = self._get_conn()
         c = conn.cursor()
-        c.execute("SELECT id FROM tasks ORDER BY priority DESC")
+        uid = self.current_user_id
+        c.execute("SELECT id FROM tasks WHERE user_id = ? ORDER BY priority DESC", (uid,))
         rows = c.fetchall()
         if task_index < 0 or task_index >= len(rows):
             conn.close()
@@ -226,8 +313,8 @@ class MemoryStore:
         for key, value in kwargs.items():
             sets.append(f"{key}=?")
             vals.append(value)
-        vals.append(task_id)
-        c.execute(f"UPDATE tasks SET {','.join(sets)} WHERE id=?", vals)
+        vals.extend([task_id, uid])
+        c.execute(f"UPDATE tasks SET {','.join(sets)} WHERE id=? AND user_id=?", vals)
         conn.commit()
         conn.close()
         if any(k in ("deadline", "mastery", "review_count", "last_review") for k in kwargs):
@@ -239,7 +326,8 @@ class MemoryStore:
     def mark_reviewed(self, task_index):
         conn = self._get_conn()
         c = conn.cursor()
-        c.execute("SELECT id, review_count, mastery FROM tasks ORDER BY priority DESC")
+        uid = self.current_user_id
+        c.execute("SELECT id, review_count, mastery FROM tasks WHERE user_id = ? ORDER BY priority DESC", (uid,))
         rows = c.fetchall()
         if task_index < 0 or task_index >= len(rows):
             conn.close()
@@ -249,27 +337,28 @@ class MemoryStore:
         mastery_idx = self.MASTERY_LEVELS.index(row["mastery"]) if row["mastery"] in self.MASTERY_LEVELS else 0
         new_mastery = self.MASTERY_LEVELS[min(mastery_idx + 1, len(self.MASTERY_LEVELS) - 1)]
         now = self.get_now_date()
-        c.execute("UPDATE tasks SET review_count=?, mastery=?, last_review=? WHERE id=?",
-                  (new_count, new_mastery, now, row["id"]))
+        c.execute("UPDATE tasks SET review_count=?, mastery=?, last_review=? WHERE id=? AND user_id=?",
+                  (new_count, new_mastery, now, row["id"], uid))
         conn.commit()
         conn.close()
         self._recalc_priorities()
         self._sync_from_db()
-        task = self.data["tasks"][task_index]
-        return f"已标记复习：{task['task']}，累计复习{new_count}次，掌握程度：{new_mastery}"
+        task = self.data["tasks"][task_index] if task_index < len(self.data["tasks"]) else {}
+        return f"已标记复习：{task.get('task', '')}，累计复习{new_count}次，掌握程度：{new_mastery}"
 
     def delete_task(self, task_index):
         """按优先级排序后的索引删除任务"""
         conn = self._get_conn()
         c = conn.cursor()
-        c.execute("SELECT id, task FROM tasks ORDER BY priority DESC")
+        uid = self.current_user_id
+        c.execute("SELECT id, task FROM tasks WHERE user_id = ? ORDER BY priority DESC", (uid,))
         rows = c.fetchall()
         if task_index < 0 or task_index >= len(rows):
             conn.close()
             return f"错误：任务索引 {task_index} 不存在"
         task_id = rows[task_index]["id"]
         task_name = rows[task_index]["task"]
-        c.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+        c.execute("DELETE FROM tasks WHERE id=? AND user_id=?", (task_id, uid))
         conn.commit()
         conn.close()
         self._sync_from_db()
@@ -293,8 +382,16 @@ class MemoryStore:
         today = self.get_now_date()
         conn = self._get_conn()
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO daily_records (date, raw_content, create_time) VALUES (?, ?, ?)",
-                  (today, content, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        uid = self.current_user_id
+        # 先检查是否已有今日记录
+        c.execute("SELECT id FROM daily_records WHERE user_id = ? AND date = ?", (uid, today))
+        old = c.fetchone()
+        if old:
+            c.execute("UPDATE daily_records SET raw_content = ? WHERE id = ? AND user_id = ?",
+                      (content, old["id"], uid))
+        else:
+            c.execute("INSERT INTO daily_records (user_id, date, raw_content, create_time) VALUES (?, ?, ?, ?)",
+                      (uid, today, content, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         conn.commit()
         conn.close()
         self._sync_from_db()
@@ -317,20 +414,21 @@ class MemoryStore:
         quality_score = self._calculate_quality_score(content, knowledge_points)
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         tags_json = json.dumps(tags if tags else [], ensure_ascii=False)
+        uid = self.current_user_id
 
         conn = self._get_conn()
         c = conn.cursor()
         # 先删除同一天的旧记录及关联知识点
-        c.execute("SELECT id FROM daily_records WHERE date=?", (today,))
+        c.execute("SELECT id FROM daily_records WHERE user_id = ? AND date = ?", (uid, today))
         old = c.fetchone()
         if old:
-            c.execute("DELETE FROM knowledge_points WHERE record_id=?", (old["id"],))
-            c.execute("DELETE FROM daily_records WHERE id=?", (old["id"],))
+            c.execute("DELETE FROM knowledge_points WHERE record_id = ? AND user_id = ?", (old["id"], uid))
+            c.execute("DELETE FROM daily_records WHERE id = ? AND user_id = ?", (old["id"], uid))
 
         c.execute(
-            """INSERT INTO daily_records (date, raw_content, mastery_level, tags, summary, quality_score, create_time)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (today, content, mastery_level, tags_json, summary or content, quality_score, now_str)
+            """INSERT INTO daily_records (user_id, date, raw_content, mastery_level, tags, summary, quality_score, create_time)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (uid, today, content, mastery_level, tags_json, summary or content, quality_score, now_str)
         )
         record_id = c.lastrowid
 
@@ -338,8 +436,8 @@ class MemoryStore:
         if knowledge_points:
             for kp in knowledge_points:
                 c.execute(
-                    "INSERT INTO knowledge_points (record_id, name, type, description) VALUES (?, ?, ?, ?)",
-                    (record_id, kp.get("name", ""), kp.get("type", ""), kp.get("description", ""))
+                    "INSERT INTO knowledge_points (user_id, record_id, name, type, description) VALUES (?, ?, ?, ?, ?)",
+                    (uid, record_id, kp.get("name", ""), kp.get("type", ""), kp.get("description", ""))
                 )
                 saved_kps.append({
                     "id": c.lastrowid,
@@ -399,10 +497,25 @@ class MemoryStore:
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn = self._get_conn()
         c = conn.cursor()
+        uid = self.current_user_id
         try:
             c.execute(
-                "INSERT OR IGNORE INTO task_knowledge_points (task_id, knowledge_id, create_time) VALUES (?, ?, ?)",
-                (task_id, knowledge_id, now_str)
+                "INSERT OR IGNORE INTO task_knowledge_points (user_id, task_id, knowledge_id, create_time) VALUES (?, ?, ?, ?)",
+                (uid, task_id, knowledge_id, now_str)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def unlink_task_knowledge(self, task_id, knowledge_id):
+        """取消任务和知识点的关联"""
+        conn = self._get_conn()
+        c = conn.cursor()
+        uid = self.current_user_id
+        try:
+            c.execute(
+                "DELETE FROM task_knowledge_points WHERE user_id = ? AND task_id = ? AND knowledge_id = ?",
+                (uid, task_id, knowledge_id)
             )
             conn.commit()
         finally:
@@ -412,8 +525,9 @@ class MemoryStore:
         """获取任务关联的知识点"""
         conn = self._get_conn()
         c = conn.cursor()
+        uid = self.current_user_id
         # 先获取任务id
-        c.execute("SELECT id FROM tasks ORDER BY priority DESC")
+        c.execute("SELECT id FROM tasks WHERE user_id = ? ORDER BY priority DESC", (uid,))
         tasks = c.fetchall()
         if task_index < 0 or task_index >= len(tasks):
             conn.close()
@@ -425,9 +539,9 @@ class MemoryStore:
             SELECT kp.id, kp.name, kp.type, kp.description
             FROM knowledge_points kp
             INNER JOIN task_knowledge_points tkp ON kp.id = tkp.knowledge_id
-            WHERE tkp.task_id = ?
+            WHERE tkp.task_id = ? AND tkp.user_id = ?
             ORDER BY tkp.id
-        """, (task_id,))
+        """, (task_id, uid))
         kps = [dict(row) for row in c.fetchall()]
         conn.close()
         return kps
@@ -436,7 +550,8 @@ class MemoryStore:
         """根据索引获取任务（含id）"""
         conn = self._get_conn()
         c = conn.cursor()
-        c.execute("SELECT * FROM tasks ORDER BY priority DESC")
+        uid = self.current_user_id
+        c.execute("SELECT * FROM tasks WHERE user_id = ? ORDER BY priority DESC", (uid,))
         tasks = c.fetchall()
         conn.close()
         if task_index < 0 or task_index >= len(tasks):
