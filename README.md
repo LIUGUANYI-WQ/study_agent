@@ -61,6 +61,126 @@
 
 ---
 
+## 🗄 数据库设计
+
+### 数据表关系图
+
+```mermaid
+erDiagram
+    tasks ||--o{ task_knowledge_points : "关联"
+    daily_records ||--o{ knowledge_points : "包含"
+    knowledge_points ||--o{ task_knowledge_points : "属于"
+
+    tasks {
+        INTEGER id PK "主键"
+        TEXT task "任务名称"
+        TEXT deadline "截止日期"
+        TEXT status "状态"
+        INTEGER review_count "复习次数"
+        TEXT create_time "创建时间"
+        TEXT category "分类"
+        TEXT mastery "掌握程度"
+        TEXT last_review "最后复习时间"
+        REAL estimated_hours "预估时长"
+        INTEGER priority "优先级"
+    }
+
+    daily_records {
+        INTEGER id PK "主键"
+        TEXT date UK "日期"
+        TEXT raw_content "原始内容"
+        TEXT mastery_level "掌握等级"
+        TEXT tags "标签"
+        TEXT summary "摘要"
+        INTEGER quality_score "质量分"
+        TEXT create_time "创建时间"
+    }
+
+    knowledge_points {
+        INTEGER id PK "主键"
+        INTEGER record_id FK "记录ID"
+        TEXT name "知识点名称"
+        TEXT type "类型"
+        TEXT description "描述"
+    }
+
+    task_knowledge_points {
+        INTEGER id PK "主键"
+        INTEGER task_id FK "任务ID"
+        INTEGER knowledge_id FK "知识点ID"
+        TEXT create_time "创建时间"
+    }
+```
+
+### 表说明
+
+| 表名 | 说明 | 核心字段 |
+|------|------|----------|
+| **tasks** | 学习任务表 | task, deadline, mastery, priority, review_count |
+| **daily_records** | 每日学习记录表 | date, raw_content, summary, quality_score |
+| **knowledge_points** | 知识点表 | name, type, description, record_id |
+| **task_knowledge_points** | 任务-知识点关联表 | task_id, knowledge_id（多对多关系） |
+
+---
+
+## 🔄 业务流程
+
+### 完整使用流程图
+
+```mermaid
+flowchart LR
+    A[添加学习任务] --> B[记录学习内容]
+    B --> C[AI 自动提取知识点]
+    C --> D[知识点关联到任务]
+    D --> E[艾宾浩斯遗忘曲线计算]
+    E --> F[生成每日复习计划]
+    F --> G[AI 智能考察]
+    G --> H[引导式解析点评]
+    H --> I[答题正确率统计]
+    I --> J[动态调整掌握程度]
+    J --> K[更新任务优先级]
+    K --> F
+
+    style A fill:#4CAF50,color:#fff
+    style G fill:#FF9800,color:#fff
+    style J fill:#2196F3,color:#fff
+```
+
+### 考察模式流程
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端
+    participant B as 后端
+    participant AI as 大模型
+
+    U->>F: 点击开始考察
+    F->>B: POST /api/quiz/start
+    B->>B: 选取待考察知识点
+    B->>AI: 流式请求出题
+    AI-->>B: SSE 流式返回题目
+    B-->>F: SSE 流式推送
+    F-->>U: 实时展示题目
+
+    U->>F: 提交答案
+    F->>B: POST /api/quiz/answer
+    B->>AI: 流式请求批改
+    AI-->>B: 思路引导 + 正确答案
+    B-->>F: SSE 流式推送
+    F-->>U: 展示解析和点评
+
+    U->>F: 结束考察
+    F->>B: 提交结束请求
+    B->>B: 统计答题正确率
+    B->>B: 计算新掌握程度
+    B->>B: 更新任务数据
+    B-->>F: 返回统计结果
+    F-->>U: 展示掌握程度变化
+```
+
+---
+
 ## 🧮 核心算法
 
 ### 1. 艾宾浩斯遗忘曲线复习调度
