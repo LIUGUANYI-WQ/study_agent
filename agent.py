@@ -452,7 +452,8 @@ class StudyAgent:
             resp = self.client.chat.completions.create(
                 model="glm-4-flash",
                 messages=[{"role": "user", "content": analysis_prompt}],
-                temperature=0.3
+                temperature=0.3,
+                timeout=30  # 30秒超时
             )
             result = resp.choices[0].message.content
             return json.loads(result)
@@ -566,6 +567,7 @@ class StudyAgent:
             "model": "glm-4-flash",
             "messages": messages,
             "temperature": 0.3,
+            "timeout": 30,  # 30秒超时，避免无限等待
         }
         if use_tools:
             kwargs["tools"] = self.TOOLS

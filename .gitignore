@@ -1,14 +1,43 @@
 # 虚拟环境
 .venv/
 venv/
-learn_object.md
-# 密钥文件
+env/
+
+# 密钥与配置
 .env
+.env.local
+config.json
+
+# 数据库文件
+*.db
+*.db-shm
+*.db-wal
 study_memory.json
+
 # 日志与缓存
 logs/
 *.log
 __pycache__/
 *.pyc
-.venv
-.trae
+*.pyo
+*.pyd
+.Python
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 临时文件
+.tmp/
+*.tmp
+
+# Trae
+.trae/
+learn_object.md

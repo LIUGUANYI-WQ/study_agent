@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Study Agent - 学习助手</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- 欢迎页 -->
+<div class="welcome-page" id="welcome-page">
+    <div class="welcome-anime-bg">
+        <div class="img-wrapper">
+            <img id="welcome-img" alt="anime-girl">
+        </div>
+    </div>
+    <div class="welcome-content">
+        <h1 class="welcome-title">Study Agent</h1>
+        <p class="welcome-subtitle">你的智能学习伙伴，让每一天都有收获</p>
+        <button class="btn-enter" id="btn-enter">
+            <span>进入学习</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>
+    </div>
+</div>
+
+<!-- 主应用 -->
+<div class="app">
+    <div class="app-bg-image" id="app-bg"></div>
+    <!-- 侧边栏 -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h1>Study Agent</h1>
+            <p>个人学习提醒助手</p>
+        </div>
+        <div class="nav">
+            <div class="nav-item active" data-page="chat" onclick="switchPage('chat')">
+                <span class="icon">💬</span><span>自由对话</span>
+            </div>
+            <div class="nav-item" data-page="tasks" onclick="switchPage('tasks')">
+                <span class="icon">📋</span><span>任务管理</span>
+            </div>
+            <div class="nav-item" data-page="record" onclick="switchPage('record')">
+                <span class="icon">📝</span><span>学习记录</span>
+            </div>
+            <div class="nav-item" data-page="plan" onclick="switchPage('plan')">
+                <span class="icon">📅</span><span>复习计划</span>
+            </div>
+            <div class="nav-item" data-page="quiz" onclick="switchPage('quiz')">
+                <span class="icon">🎓</span><span>考察模式</span>
+            </div>
+        </div>
+        <div class="stats">
+            <div class="stat-card"><div class="num" id="stat-tasks">0</div><div class="label">任务数</div></div>
+            <div class="stat-card"><div class="num" id="stat-reviews">0</div><div class="label">复习次数</div></div>
+            <div class="stat-card"><div class="num" id="stat-records">0</div><div class="label">学习记录</div></div>
+            <div class="stat-card"><div class="num" id="stat-done">0</div><div class="label">已完成</div></div>
+        </div>
+    </div>
+
+    <!-- 主内容 -->
+    <div class="main">
+        <!-- 对话页 -->
+        <div class="page active" id="page-chat">
+            <div class="main-header"><h2>💬 自由对话</h2></div>
+            <div class="main-body" style="padding: 0 24px; display: flex; flex-direction: column;">
+                <div class="chat-container">
+                    <div class="chat-messages" id="chat-messages">
+                        <div class="msg assistant">
+                            <div class="msg-avatar">🤖</div>
+                            <div class="msg-bubble">你好！我是你的学习助手，可以帮你添加任务、记录学习内容、制定复习计划等。请直接告诉我你的学习需求，比如"帮我添加一个Python任务"、"我今天学了xxx"。</div>
+                        </div>
+                    </div>
+                    <div class="chat-input-area">
+                        <input type="text" id="chat-input" placeholder="输入你的学习需求..." onkeydown="if(event.key==='Enter')sendChat()">
+                        <button class="btn btn-primary" onclick="sendChat()">发送</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 任务管理页 -->
+        <div class="page" id="page-tasks">
+            <div class="main-header">
+                <h2>📋 任务管理</h2>
+                <button class="btn btn-primary btn-sm" onclick="showAddTask()">+ 添加任务</button>
+            </div>
+            <div class="main-body">
+                <div id="add-task-form" class="card" style="display:none;">
+                    <div class="card-title">添加新任务</div>
+                    <div class="form-group">
+                        <label>任务名称</label>
+                        <input type="text" id="task-name" placeholder="如：学习MySQL事务">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>截止日期</label>
+                            <input type="date" id="task-deadline">
+                        </div>
+                        <div class="form-group">
+                            <label>分类</label>
+                            <select id="task-category">
+                                <option value="编程">编程</option>
+                                <option value="算法">算法</option>
+                                <option value="数学">数学</option>
+                                <option value="英语">英语</option>
+                                <option value="其他" selected>其他</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>掌握程度</label>
+                            <select id="task-mastery">
+                                <option value="生疏">生疏</option>
+                                <option value="一般">一般</option>
+                                <option value="熟悉">熟悉</option>
+                                <option value="精通">精通</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>预估时长(小时)</label>
+                            <input type="number" id="task-hours" value="1.0" step="0.5" min="0.5">
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:10px;">
+                        <button class="btn btn-primary" onclick="submitTask()">确认添加</button>
+                        <button class="btn btn-secondary" onclick="hideAddTask()">取消</button>
+                    </div>
+                </div>
+                <ul class="task-list" id="task-list"></ul>
+                <div class="empty" id="tasks-empty" style="display:none;">
+                    <div class="icon">📋</div>
+                    <p>暂无任务，点击上方按钮添加</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 学习记录页 -->
+        <div class="page" id="page-record">
+            <div class="main-header">
+                <h2>📝 记录学习内容</h2>
+                <button class="btn btn-success btn-sm" onclick="saveRecord()" id="btn-save-record" style="display:none;">💾 保存到数据库</button>
+            </div>
+            <div class="main-body" style="padding: 0;">
+                <div class="record-layout">
+                    <!-- 左侧：对话区 -->
+                    <div class="record-chat-panel">
+                        <div class="record-chat-messages" id="record-chat-messages">
+                            <div class="record-msg assistant">
+                                <div class="record-msg-avatar">🤖</div>
+                                <div class="record-msg-bubble">
+                                    你好！请告诉我今天学了什么，我来帮你分析和整理学习记录。
+                                    <br><br>
+                                    💡 <strong>使用提示：</strong>
+                                    <br>• 直接描述学习内容，我会自动提取知识点
+                                    <br>• 可以多轮对话，让我补充、修改、优化记录
+                                    <br>• 右侧可以直接编辑结构化内容
+                                    <br>• 满意后点击右上角"保存到数据库"
+                                </div>
+                            </div>
+                        </div>
+                        <div class="record-chat-input">
+                            <textarea id="record-chat-input" placeholder="描述你今天学了什么，或者告诉我要怎么修改记录..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendRecordChat();}"></textarea>
+                            <button class="btn btn-primary" onclick="sendRecordChat()" id="btn-record-send">发送</button>
+                        </div>
+                    </div>
+                    <!-- 右侧：结构化结果 -->
+                    <div class="record-editor-panel">
+                        <div class="record-editor-header">
+                            <h3>📊 结构化学习记录</h3>
+                            <span class="record-editor-hint">可直接编辑修改</span>
+                        </div>
+                        <div class="record-editor-body" id="record-editor-body">
+                            <div class="empty" style="padding: 40px 20px;">
+                                <div class="icon">📝</div>
+                                <p>在左侧发送学习内容<br>这里将显示结构化分析结果</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 复习计划页 -->
+        <div class="page" id="page-plan">
+            <div class="main-header">
+                <h2>📅 复习计划</h2>
+                <button class="btn btn-primary btn-sm" onclick="generatePlan()">生成今日计划</button>
+            </div>
+            <div class="main-body">
+                <div id="plan-content" class="card">
+                    <div class="empty">
+                        <div class="icon">📅</div>
+                        <p>点击"生成今日计划"获取复习建议</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 考察模式页 -->
+        <div class="page" id="page-quiz">
+            <div class="main-header">
+                <h2>🎓 学习考察</h2>
+                <button class="btn btn-primary btn-sm" onclick="startQuiz()">开始考察</button>
+            </div>
+            <div class="main-body">
+                <div class="quiz-container" id="quiz-container">
+                    <div class="empty">
+                        <div class="icon">🎓</div>
+                        <p>基于遗忘曲线，智能出题考察你的学习成果</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 知识点讲解弹框 -->
+<div id="kp-explain-modal" class="modal" onclick="if(event.target===this)closeKpExplain()">
+    <div class="modal-content kp-modal">
+        <div class="modal-header">
+            <div class="modal-title" id="kp-explain-title">📖 知识点讲解</div>
+            <button class="modal-close" onclick="closeKpExplain()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div id="kp-explain-content" class="kp-explain-content"></div>
+        </div>
+    </div>
+</div>
+
+<!-- 选择知识点关联弹框 -->
+<div id="kp-link-modal" class="modal" onclick="if(event.target===this)closeKpLinkModal()">
+    <div class="modal-content kp-modal">
+        <div class="modal-header">
+            <div class="modal-title">🔗 关联知识点</div>
+            <button class="modal-close" onclick="closeKpLinkModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="kp-link-search">
+                <input type="text" id="kp-link-search-input" placeholder="搜索知识点..." oninput="filterKpLinkList()">
+            </div>
+            <div id="kp-link-list" class="kp-link-list"></div>
+            <div class="kp-link-actions">
+                <button class="btn btn-primary" onclick="confirmKpLink()">确认关联</button>
+                <button class="btn btn-secondary" onclick="closeKpLinkModal()">取消</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
