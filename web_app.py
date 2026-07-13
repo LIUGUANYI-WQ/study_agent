@@ -672,6 +672,7 @@ def review_plan():
                 days_left = 999
 
             task_info = {
+                "task_id": task.get("id"),
                 "task_index": idx,
                 "name": task.get("task", ""),
                 "deadline": deadline_str,
@@ -1145,6 +1146,7 @@ def quiz_start():
     """
     try:
         data = request.get_json(silent=True) or {}
+        task_id = data.get("task_id")
         task_index = data.get("task_index")
         custom_knowledge_points = data.get("knowledge_points")
         custom_title = data.get("title", "")
@@ -1165,16 +1167,24 @@ def quiz_start():
             ]
             tasks_str = custom_title or "指定知识点考察"
             quiz_context = f"本次考察范围：{custom_title or '指定知识点'}"
-        elif task_index is not None:
-            # 根据任务索引找对应的任务
+        elif task_id is not None or task_index is not None:
             conn = agent.memory._get_conn()
             c = conn.cursor()
-            c.execute("SELECT id, task, category, mastery FROM tasks ORDER BY priority DESC")
-            tasks = c.fetchall()
-            if task_index < 0 or task_index >= len(tasks):
-                conn.close()
-                return jsonify({"error": "任务不存在"}), 400
-            task = tasks[task_index]
+
+            if task_id is not None:
+                c.execute("SELECT id, task, category, mastery FROM tasks WHERE id = ?", (task_id,))
+                task = c.fetchone()
+                if not task:
+                    conn.close()
+                    return jsonify({"error": "任务不存在"}), 400
+            else:
+                c.execute("SELECT id, task, category, mastery FROM tasks ORDER BY priority DESC")
+                tasks = c.fetchall()
+                if task_index < 0 or task_index >= len(tasks):
+                    conn.close()
+                    return jsonify({"error": "任务不存在"}), 400
+                task = tasks[task_index]
+
             task_id = task["id"]
             task_name = task["task"]
             task_category = task["category"]
@@ -1366,10 +1376,10 @@ def quiz_start():
             app.config["quiz_history"] = quiz_history
             app.config["quiz_system_prompt"] = quiz_system_prompt
             app.config["quiz_source_page"] = source_page
-            app.config["quiz_task_index"] = task_index
+            app.config["quiz_task_id"] = task_id
 
             question = _extract_question(full_content)
-            yield f"data: {json.dumps({'type': 'done', 'question': question, 'raw': full_content, 'source_page': source_page, 'task_index': task_index}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'question': question, 'raw': full_content, 'source_page': source_page, 'task_id': task_id}, ensure_ascii=False)}\n\n"
 
         print(f"[考察] 开始考察，知识点数: {len(knowledge_points_for_quiz)}", flush=True)
         return Response(generate(), mimetype="text/event-stream")
@@ -1461,22 +1471,20 @@ def _calc_new_mastery(old_mastery, correct_rate, total_questions):
     return mastery_levels[new_idx]
 
 
-def _update_task_after_quiz(task_index, stats):
+def _update_task_after_quiz(task_id, stats):
     """考察结束后更新任务信息（掌握程度、复习次数、最后复习时间）"""
-    if task_index is None:
+    if task_id is None:
         return None
 
     try:
         conn = agent.memory._get_conn()
         c = conn.cursor()
-        c.execute("SELECT id, task, review_count, mastery FROM tasks ORDER BY priority DESC")
-        tasks = c.fetchall()
-        if task_index < 0 or task_index >= len(tasks):
+        c.execute("SELECT id, task, review_count, mastery FROM tasks WHERE id = ?", (task_id,))
+        task = c.fetchone()
+        if not task:
             conn.close()
             return None
 
-        task = tasks[task_index]
-        task_id = task["id"]
         old_mastery = task["mastery"]
         old_count = task["review_count"]
 
@@ -1515,7 +1523,7 @@ def quiz_answer():
 
     quiz_history = app.config.get("quiz_history", [])
     quiz_system_prompt = app.config.get("quiz_system_prompt", "")
-    task_index = app.config.get("quiz_task_index")
+    task_id = app.config.get("quiz_task_id")
     source_page = app.config.get("quiz_source_page", "")
 
     if answer.lower() == "q":
@@ -1543,7 +1551,7 @@ def quiz_answer():
         if answer.lower() == "q":
             print(f"[考察] 考察结束", flush=True)
             stats = _analyze_quiz_results(quiz_history)
-            mastery_update = _update_task_after_quiz(task_index, stats)
+            mastery_update = _update_task_after_quiz(task_id, stats)
             done_data = json.dumps({
                 "type": "done",
                 "reply": full_content,
@@ -1551,7 +1559,7 @@ def quiz_answer():
                 "stats": stats,
                 "mastery_update": mastery_update,
                 "source_page": source_page,
-                "task_index": task_index
+                "task_id": task_id
             }, ensure_ascii=False)
             yield f"data: {done_data}\n\n"
         else:

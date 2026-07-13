@@ -12,4 +12,6 @@ COPY . .
 
 EXPOSE 5000
 
+ENV DB_PATH=/app/data/study_memory.db
+
 CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "120", "web_app:app"]

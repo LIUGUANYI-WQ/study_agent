@@ -235,7 +235,7 @@ async function loadTaskKnowledgePoints(index) {
 async function startQuizFromTask(index) {
     const task = tasksData[index];
     if (!task) return;
-    currentQuizParams = { task_index: index, title: task.task, source_page: 'tasks' };
+    currentQuizParams = { task_id: task.id, task_index: index, title: task.task, source_page: 'tasks' };
     switchPage('quiz');
     const container = document.getElementById('quiz-container');
     container.innerHTML = `<div class="plan-loading"><div class="spinner"></div><p style="margin-top:12px;">正在为「${escapeHtml(task.task)}」出题...</p></div>`;
@@ -1248,7 +1248,7 @@ async function quizPlanSingleKp(key, kpIdx, event) {
 async function startQuizFromPlan(key) {
     const task = getPlanTaskByKey(key);
     if (!task) return;
-    currentQuizParams = { task_index: task.task_index, title: task.name, source_page: 'review-plan', plan_key: key };
+    currentQuizParams = { task_id: task.task_id, task_index: task.task_index, title: task.name, source_page: 'review-plan', plan_key: key };
     switchPage('quiz');
     const container = document.getElementById('quiz-container');
     container.innerHTML = `<div class="plan-loading"><div class="spinner"></div><p style="margin-top:12px;">正在为「${escapeHtml(task.name)}」出题...</p></div>`;
@@ -2156,7 +2156,7 @@ function getAuthHeaders() {
     return headers;
 }
 
-function showAuthModal(mode) {
+function showAuthModal(mode, forceLogin = false) {
     const modal = document.getElementById('auth-modal');
     const title = document.getElementById('auth-title');
     const submitBtn = document.getElementById('auth-submit-btn');
@@ -2164,11 +2164,20 @@ function showAuthModal(mode) {
     const switchLink = document.getElementById('auth-switch-link');
     const nicknameGroup = document.getElementById('nickname-group');
     const errorEl = document.getElementById('auth-error');
+    const closeBtn = modal.querySelector('.auth-close');
 
     errorEl.style.display = 'none';
     document.getElementById('auth-username').value = '';
     document.getElementById('auth-password').value = '';
     document.getElementById('auth-nickname').value = '';
+
+    if (forceLogin) {
+        closeBtn.style.display = 'none';
+        modal.dataset.forceLogin = 'true';
+    } else {
+        closeBtn.style.display = 'block';
+        modal.dataset.forceLogin = 'false';
+    }
 
     if (mode === 'login') {
         title.textContent = '登录';
@@ -2189,13 +2198,16 @@ function showAuthModal(mode) {
 }
 
 function hideAuthModal() {
-    document.getElementById('auth-modal').style.display = 'none';
+    const modal = document.getElementById('auth-modal');
+    if (modal.dataset.forceLogin === 'true') return;
+    modal.style.display = 'none';
 }
 
 function switchAuthMode() {
     const modal = document.getElementById('auth-modal');
     const currentMode = modal.dataset.mode;
-    showAuthModal(currentMode === 'login' ? 'register' : 'login');
+    const forceLogin = modal.dataset.forceLogin === 'true';
+    showAuthModal(currentMode === 'login' ? 'register' : 'login', forceLogin);
 }
 
 async function submitAuth() {
@@ -2234,7 +2246,7 @@ async function submitAuth() {
         localStorage.setItem('current_user', JSON.stringify(currentUser));
 
         updateUserUI();
-        hideAuthModal();
+        document.getElementById('auth-modal').style.display = 'none';
         showToast(mode === 'login' ? '登录成功' : '注册成功', 'success');
 
         loadStats();
@@ -2278,5 +2290,12 @@ function updateUserUI() {
 document.addEventListener('DOMContentLoaded', () => {
     initWelcome();
     updateUserUI();
-    loadStats();
+
+    if (!currentUser) {
+        showAuthModal('login', true);
+    } else {
+        loadStats();
+        if (typeof loadTasks === 'function') loadTasks();
+        if (typeof loadTodayRecord === 'function') loadTodayRecord();
+    }
 });
